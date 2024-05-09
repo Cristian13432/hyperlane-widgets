@@ -1,86 +1,84 @@
-name: ci
+name: Continuous Integration
 
 on:
-  # Triggers the workflow on push or pull request events but only for the main branch
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
   install:
     runs-on: ubuntu-latest
+    outputs:
+      yarn-cache-key: ${{ steps.yarn-cache.outputs.cache-key }}
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: .//node_modules
-          key: ${{ runner.os }}-yarn-cache-${{ hashFiles('./yarn.lock') }}
 
-      - name: yarn-install
-        # Check out the lockfile from main, reinstall, and then
-        # verify the lockfile matches what was committed.
+      - name: Cache yarn dependencies
+        id: yarn-cache
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install Dependencies
         run: |
-            yarn install
-            CHANGES=$(git status -s)
-            if [[ ! -z $CHANGES ]]; then
-              echo "Changes found: $CHANGES"
-              git diff
-              exit 1
-            fi
+          yarn install --frozen-lockfile
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Error: Uncommitted changes detected in yarn.lock or node_modules!"
+            git diff
+            exit 1
+          fi
 
   build:
+    needs: install
     runs-on: ubuntu-latest
-    needs: [install]
     steps:
       - uses: actions/checkout@v2
 
-      - name: yarn-cache
+      - name: Restore yarn cache
         uses: actions/cache@v2
         with:
-          path: .//node_modules
-          key: ${{ runner.os }}-yarn-cache-${{ hashFiles('./yarn.lock') }}
+          path: node_modules
+          key: ${{ needs.install.outputs.yarn-cache-key }}
 
-      - name: build-cache
-        uses: actions/cache@v2
-        with:
-          path: ./*
-          key: ${{ github.sha }}
-
-      - name: build
+      - name: Build Project
         run: yarn run build
 
   prettier:
+    needs: install
     runs-on: ubuntu-latest
-    needs: [install]
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: .//node_modules
-          key: ${{ runner.os }}-yarn-cache-${{ hashFiles('./yarn.lock') }}
 
-      - name: prettier
+      - name: Restore yarn cache
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ needs.install.outputs.yarn-cache-key }}
+
+      - name: Check Formatting
         run: |
-          yarn run prettier
-          CHANGES=$(git status -s)
-          if [[ ! -z $CHANGES ]]; then
-            echo "Changes found: $CHANGES"
+          yarn run prettier --check .
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Error: Code formatting issues detected!"
             exit 1
           fi
 
   lint:
+    needs: install
     runs-on: ubuntu-latest
-    needs: [install]
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: .//node_modules
-          key: ${{ runner.os }}-yarn-cache-${{ hashFiles('./yarn.lock') }}
 
-      - name: lint 
+      - name: Restore yarn cache
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ needs.install.outputs.yarn-cache-key }}
+
+      - name: Lint Code
         run: yarn run lint
